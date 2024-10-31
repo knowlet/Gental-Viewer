@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gentle Viewer
 // @namespace    http://knowlet3389.blogspot.tw/
-// @version      0.45
+// @version      1.0
 // @description  Auto load hentai pic.
 // @icon         http://e-hentai.org/favicon.ico
 // @author       KNowlet
@@ -11,76 +11,151 @@
 // @downloadURL  https://github.com/knowlet/Gentle-Viewer/raw/dev/GentleViewer.user.js
 // ==/UserScript==
 'use strict';
-class Gentle {
+// Simple configuration object
+const CONFIG = {
+    SCROLL_THRESHOLD: 0.8,
+    PAGE_DELAY: 2000,
+    LOADING_GIF: '//ehgt.org/g/roller.gif'
+};
+
+class GentleViewer {
     constructor(pageNum = 0, imgNum = 0) {
         this.pageNum = pageNum;
         this.imgNum = imgNum;
         this.imgList = [];
-        if (this.checkFunctional()) {
-            this.generateImg(() => {
-                this.loadPageUrls(window.gdt);
-                this.cleanGDT();
-                if (this.pageNum) {
-                    setTimeout(_ => { this.getNextPage(1); }, 10000);
-                }
-            });
-        }
-        else {
-            window.alert("There are some issue in the script\nplease open an issue on Github");
+
+        if (this.isValid()) {
+            this.initialize();
+        } else {
+            window.alert("Invalid configuration. Please report this issue on Github.");
             window.open("https://github.com/knowlet/Gentle-Viewer/issues");
         }
     }
-    checkFunctional() {
+
+    isValid() {
         return (this.imgNum > 41 && this.pageNum < 2) || this.imgNum !== 0;
     }
-    loadPageUrls(e) {
-        for (let item of e.querySelectorAll('a[href]')) {
-            fetch(item.href, {credentials: 'include'})
-                .then(res => res.text())
-                .then(html => {
-                let imgNo = Number(html.match("startpage=(\\d+)").pop());
-                let src = (new DOMParser()).parseFromString(html, 'text/html').getElementById("img").src;
-                this.imgList[imgNo-1].src = src;
-            });
-        }
-    }
-    getPage(p) {
-        fetch(`${location.href}?p=${p}`, {credentials: 'include'})
-            .then(res => res.text())
-            .then(html => {
-            let dom = (new DOMParser()).parseFromString(html, 'text/html');
-            this.loadPageUrls(dom.getElementById('gdt'));
-        });
-        if (p < this.pageNum) {
-            setTimeout(_ => { this.getNextPage(p + 1); }, 2000);
-        }
-    }
-    getNextPage(i) {
-        const myInterval = setInterval(_ => {
-            if (document.documentElement.scrollTop >= (document.documentElement.scrollHeight - document.documentElement.clientHeight) * 0.8) {
-                clearTimeout(myTimeout);
-                clearInterval(myInterval);
-                this.getPage(i);
+
+    async initialize() {
+        try {
+            // Gather URLs before cleaning
+            const initialUrls = Array.from(
+                window.gdt.querySelectorAll('a[href]'),
+                link => link.href
+            );
+
+            // Clean and setup
+            this.cleanGallery();
+            await this.setupImages();
+            await this.loadUrls(initialUrls);
+
+            // Start next page loading if needed
+            if (this.pageNum) {
+                this.getNextPage(1);
             }
-        }, 1000);
-        const myTimeout = setTimeout(_ => {
-            clearInterval(myInterval);
-            this.getPage(i);
-        }, 30000);
+        } catch (error) {
+            console.error('Initialization failed:', error);
+        }
     }
-    cleanGDT() {
-        while (window.gdt.firstChild && window.gdt.firstChild.className) {
+
+    cleanGallery() {
+        while (window.gdt.firstChild) {
             window.gdt.removeChild(window.gdt.firstChild);
         }
+        // remove grid display class
+        window.gdt.classList.remove("gt100");
     }
-    generateImg(callback) {
-        for (let i = 0; i < this.imgNum; ++i) {
-            let img = new Image();
-            img.src = 'http://ehgt.org/g/roller.gif';
+
+    async setupImages() {
+        for (let i = 0; i < this.imgNum; i++) {
+            const img = new Image();
+            img.src = CONFIG.LOADING_GIF;
             this.imgList.push(img);
             window.gdt.appendChild(img);
         }
-        callback && callback();
+    }
+
+    async loadUrls(urls) {
+        const fetchPromises = urls.map(url =>
+            fetch(url, { credentials: 'include' })
+                .then(res => res.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+
+                    const imgNo = Number(html.match(/startpage=(\d+)/)?.[1] || 0);
+                    const imgSrc = doc.getElementById('img')?.src;
+
+                    if (imgNo && imgSrc && this.imgList[imgNo - 1]) {
+                        this.imgList[imgNo - 1].src = imgSrc;
+                    }
+                })
+                .catch(error => console.error(`Failed to load image from ${url}:`, error))
+        );
+
+        await Promise.all(fetchPromises);
+    }
+
+    async loadPage(pageNum) {
+        try {
+            const response = await fetch(`${location.href}?p=${pageNum}`, {
+                credentials: 'include'
+            });
+            const html = await response.text();
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+
+            const gallery = doc.getElementById('gdt');
+            if (gallery) {
+                const urls = Array.from(
+                    gallery.querySelectorAll('a[href]'),
+                    link => link.href
+                );
+                await this.loadUrls(urls);
+            }
+
+            if (pageNum < this.pageNum) {
+                setTimeout(() => this.getNextPage(pageNum + 1), CONFIG.PAGE_DELAY);
+            }
+        } catch (error) {
+            console.error(`Failed to load page ${pageNum}:`, error);
+        }
+    }
+
+    getNextPage(pageNum) {
+        const checkScroll = () => {
+            const { scrollTop, scrollHeight, clientHeight } = document.documentElement;
+            return scrollTop >= (scrollHeight - clientHeight) * CONFIG.SCROLL_THRESHOLD;
+        };
+
+        if (checkScroll()) {
+            this.loadPage(pageNum);
+            return;
+        }
+
+        const scrollHandler = () => {
+            if (checkScroll()) {
+                window.removeEventListener('scroll', scrollHandler);
+                this.loadPage(pageNum);
+            }
+        };
+
+        window.addEventListener('scroll', scrollHandler);
     }
 }
-new Gentle(Number([...document.querySelectorAll("table.ptt td")].slice(-2)[0].textContent), Number(window.gdd.querySelector("#gdd tr:nth-child(n+6) td.gdt2").textContent.split(" ")[0]));
+
+// Initialize the viewer
+try {
+    const pageNumElement = [...document.querySelectorAll('table.ptt td')].slice(-2)[0];
+    const imageCountElement = window.gdd.querySelector('#gdd tr:nth-child(n+6) td.gdt2');
+
+    if (pageNumElement && imageCountElement) {
+        const pageNum = Number(pageNumElement.textContent);
+        const imgNum = Number(imageCountElement.textContent.split(' ')[0]);
+        new GentleViewer(pageNum, imgNum);
+    } else {
+        throw new Error('Required elements not found');
+    }
+} catch (error) {
+    console.error('Failed to initialize viewer:', error);
+    window.alert('Failed to initialize. Please check the console for details.');
+}
