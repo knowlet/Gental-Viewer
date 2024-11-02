@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gentle Viewer
 // @namespace    http://knowlet3389.blogspot.tw/
-// @version      1.0
+// @version      1.1
 // @description  Auto load hentai pic.
 // @icon         http://e-hentai.org/favicon.ico
 // @author       KNowlet
@@ -63,7 +63,9 @@ class GentleViewer {
             window.gdt.removeChild(window.gdt.firstChild);
         }
         // remove grid display class
-        window.gdt.classList.remove("gt100");
+        window.gdt.className = "";
+        window.gdt.style = "display: block;";
+        
     }
 
     async setupImages() {
